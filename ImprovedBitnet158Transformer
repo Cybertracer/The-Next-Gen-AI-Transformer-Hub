@@ -1,0 +1,37 @@
+import torch
+import random
+
+class ImprovedBitnet158Transformer:
+    def __init__(self, vocab_size, big_dim, little_dim, token_tree_depth, reference_size):
+        self.big_little_decoder = BigLittleDecoder(vocab_size, big_dim, little_dim)
+        self.spec_infer_token_tree = SpecInferTokenTree(vocab_size, token_tree_depth)
+        self.reference_guided_decoder = ReferenceGuidedDecoder(vocab_size, reference_size)
+
+    def decode(self, input_sequence, reference_sequence, big_logits, little_logits):
+        predicted_token = self.spec_infer_token_tree.predict(input_sequence)
+
+        if self.spec_infer_token_tree.verify(input_sequence, predicted_token):
+            return predicted_token
+
+        combined_embedding = self.reference_guided_decoder(input_sequence, reference_sequence)
+        big_probabilities = F.softmax(big_logits, dim=-1)
+        little_probabilities = F.softmax(little_logits, dim=-1)
+
+        total_probabilities = self.big_little_decoder(input_sequence, big_probabilities, little_probabilities)
+
+        return total_probabilities
+
+# Example usage
+vocab_size = 10000
+big_dim = 512
+little_dim = 256
+token_tree_depth = 8
+reference_size = 5000
+
+improved_bitnet = ImprovedBitnet158Transformer(vocab_size, big_dim, little_dim, token_tree_depth, reference_size)
+input_sequence = torch.randint(0, vocab_size, (100,))
+reference_sequence = torch.randint(0, reference_size, (100,))
+big_logits = torch.randn(vocab_size, big_dim)
+little_logits = torch.randn(vocab_size, little_dim)
+
+predicted_token = improved_bitnet.decode(input_sequence, reference_sequence, big_logits, little_logits)
