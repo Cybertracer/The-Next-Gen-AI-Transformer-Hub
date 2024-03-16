@@ -1,0 +1,52 @@
+import unittest
+from improved_bitnet import ImprovedBitnet158Transformer
+
+class TestImprovedBitnet158Transformer(unittest.TestCase):
+    def setUp(self):
+        self.vocab_size = 10000
+        self.big_dim = 512
+        self.little_dim = 256
+        self.token_tree_depth = 8
+        self.reference_size = 5000
+        self.improved_bitnet = ImprovedBitnet158Transformer(self.vocab_size, self.big_dim, self.little_dim, self.token_tree_depth, self.reference_size)
+
+    def test_decode_with_correct_prediction(self):
+        input_sequence = torch.randint(0, self.vocab_size, (100,))
+        reference_sequence = torch.randint(0, self.reference_size, (100,))
+        big_logits = torch.randn(self.vocab_size, self.big_dim)
+        little_logits = torch.randn(self.vocab_size, self.little_dim)
+
+        predicted_token = self.improved_bitnet.spec_infer_token_tree.predict(input_sequence)
+        self.improved_bitnet.spec_infer_token_tree.verify(input_sequence, predicted_token)
+
+        expected_probabilities = torch.zeros(self.vocab_size)
+        expected_probabilities[predicted_token] = 1.0
+
+        total_probabilities = self.improved_bitnet.decode(input_sequence, reference_sequence, big_logits, little_logits)
+
+        self.assertTrue(torch.allclose(total_probabilities, expected_probabilities, atol=1e-6))
+
+    def test_decode_with_incorrect_prediction(self):
+        input_sequence = torch.randint(0, self.vocab_size, (100,))
+        reference_sequence = torch.randint(0, self.reference_size, (100,))
+        big_logits = torch.randn(self.vocab_size, self.big_dim)
+        little_logits = torch.randn(self.vocab_size, self.little_dim)
+
+        predicted_token = self.improved_bitnet.spec_infer_token_tree.predict(input_sequence)
+        self.improved_bitnet.spec_infer_token_tree.verify(input_sequence, predicted_token, False)
+
+        combined_embedding = self.improved_bitnet.reference_guided_decoder(input_sequence, reference_sequence)
+        big_probabilities = F.softmax(big_logits, dim=-1)
+        little_probabilities = F.softmax(little_logits, dim=-1)
+
+        total_probabilities = self.improved_bitnet.decode(input_sequence, reference_sequence, big_logits, little_logits)
+
+        # Check that the predicted token is not the highest probability token
+        predicted_token_probability = total_probabilities[predicted_token]
+        highest_probability_token = torch.argmax(total_probabilities)
+        self.assertNotEqual(predicted_token, highest_probability_token)
+
+    # Add more test cases to cover additional scenarios and edge cases
+
+if __name__ == '__main__':
+    unittest.main()
