@@ -1,91 +1,127 @@
 import torch
 
-def absmean_quant(w: torch.Tensor, group_size: int = 128) -> torch.Tensor:
+def absmean_quant(w: torch.Tensor,
+                  group_size: int = 128,
+                  ternary_method: str = 'round' # options: 'round', 'threshold'
+                  ) -> torch.Tensor:
     """Group-wise or per-tensor AbsMean quantization for weights.
     Returns dequantized output to simulate quantization effect.
     Weights are quantized to {-1, 0, +1} relative to their scale.
+
+    Args:
+        w (torch.Tensor): Weight tensor.
+        group_size (int, optional): Size of groups for group-wise quantization.
+                                    If None or <=0, per-tensor quantization is used. Defaults to 128.
+        ternary_method (str, optional): Method for ternary quantization.
+                                        'round': Rounds to nearest {-1, 0, 1}.
+                                        'threshold': Uses a 0.5 threshold on normalized magnitude.
+                                        Defaults to 'round'.
+    Returns:
+        torch.Tensor: Dequantized weights after applying ternary quantization.
     """
-    if group_size is None or group_size <= 0:  # Per-tensor quantization
-        # Clamp scale to avoid issues with all-zero tensors.
-        # If w.abs().mean() is 0, scale becomes 1e-6.
-        # normalized_w will be 0. q_w will be 0. Result will be 0. Correct.
-        scale = w.abs().mean().clamp_min(1e-6)
+
+    if w.numel() == 0:
+        return w.clone() # Return empty tensor if input is empty
+
+    # Per-tensor quantization path (also handles w.numel() <= group_size)
+    if group_size is None or group_size <= 0 or w.numel() <= group_size:
+        scale = w.abs().mean().clamp_min(1e-9) # clamp_min to avoid division by zero
         normalized_w = w / scale
-        q_w = normalized_w.round().clamp(-1, 1) # Ternary values based on rounding
-    else:  # Group-wise quantization
+
+        if ternary_method == 'round':
+            q_w = normalized_w.round().clamp(-1, 1)
+        elif ternary_method == 'threshold':
+            # Values with |normalized_w| <= 0.5 become 0, others +/-1 based on sign.
+            q_w = torch.sign(normalized_w) * (normalized_w.abs() > 0.5).float()
+        else:
+            raise ValueError(f"Unknown ternary_method: {ternary_method}. Choose 'round' or 'threshold'.")
+
+        dequantized_w = q_w * scale
+        return dequantized_w
+
+    # Group-wise quantization path
+    else:
         orig_shape = w.shape
-        if w.numel() == 0:
-            return w.clone() # Return empty tensor if input is empty
-        if w.numel() % group_size != 0 and w.numel() > group_size :
-            # This basic version requires group_size to perfectly divide the tensor numel
-            # or for the tensor to be smaller than group_size (becomes per-tensor like)
-            # For simplicity, we'll fall back to per-tensor if not perfectly divisible and large.
-            # A more robust implementation might pad or handle remainders.
+
+        # Fallback for tensors not perfectly divisible by group_size (and larger than group_size)
+        if w.numel() % group_size != 0:
             # print(f"Warning: tensor size {w.numel()} not perfectly divisible by group_size {group_size}. Falling back to per-tensor.")
-            scale = w.abs().mean().clamp_min(1e-6)
+            scale = w.abs().mean().clamp_min(1e-9)
             normalized_w = w / scale
-            q_w = normalized_w.round().clamp(-1, 1) # Ternary values
-            return q_w * scale
-
-
-        # If tensor numel is less than group_size, treat as a single group (per-tensor)
-        if w.numel() <= group_size:
-             scale = w.abs().mean().clamp_min(1e-6)
-             normalized_w = w / scale
-             q_w = normalized_w.round().clamp(-1, 1)
-             return q_w * scale
-
+            if ternary_method == 'round':
+                q_w = normalized_w.round().clamp(-1, 1)
+            elif ternary_method == 'threshold':
+                q_w = torch.sign(normalized_w) * (normalized_w.abs() > 0.5).float()
+            else:
+                raise ValueError(f"Unknown ternary_method: {ternary_method}")
+            return (q_w * scale) # Return directly, no reshape needed as it's effectively per-tensor
 
         w_reshaped = w.view(-1, group_size)
-        scale_grouped = w_reshaped.abs().mean(dim=-1, keepdim=True).clamp_min(1e-6)
+        scale_grouped = w_reshaped.abs().mean(dim=-1, keepdim=True).clamp_min(1e-9)
 
         normalized_w_grouped = w_reshaped / scale_grouped
-        q_w_grouped = normalized_w_grouped.round().clamp(-1, 1) # Ternary values
+
+        if ternary_method == 'round':
+            q_w_grouped = normalized_w_grouped.round().clamp(-1, 1)
+        elif ternary_method == 'threshold':
+            q_w_grouped = torch.sign(normalized_w_grouped) * (normalized_w_grouped.abs() > 0.5).float()
+        else:
+            raise ValueError(f"Unknown ternary_method: {ternary_method}")
 
         dequantized_w_grouped = q_w_grouped * scale_grouped
         return dequantized_w_grouped.view(orig_shape)
 
-    # For per-tensor, dequantize here
-    dequantized_w = q_w * scale
-    return dequantized_w
 
 if __name__ == '__main__':
-    print("Running absmean_quant.py example:")
+    print("Running absmean_quant.py example with different ternary methods:")
 
-    # Per-tensor example
-    weights_pt = torch.tensor([[-1.5, -0.8, -0.2],
-                               [ 0.0,  0.1,  0.6],
-                               [ 1.2,  1.7,  0.3]]) * 2.0
-    print(f"\nOriginal weights (for per-tensor):\n{weights_pt}")
-    dequant_weights_pt = absmean_quant(weights_pt, group_size=None)
-    print(f"Dequantized weights after per-tensor absmean_quant:\n{dequant_weights_pt}")
-    # Show the effective ternary weights (not directly returned but useful to see)
-    scale_pt_eff = weights_pt.abs().mean().clamp_min(1e-6)
-    ternary_pt_eff = (weights_pt / scale_pt_eff).round().clamp(-1,1)
-    print(f"Effective ternary weights (for per-tensor):\n{ternary_pt_eff}")
+    weights_example = torch.tensor([[-1.5, -0.8, -0.2, 0.2, 0.8, 1.5],
+                                    [-0.6, -0.4, -0.1, 0.1, 0.4, 0.6]]) * 2.0
+    print(f"Original weights:\n{weights_example}")
 
+    # Per-tensor, 'round' method
+    dequant_pt_round = absmean_quant(weights_example, group_size=None, ternary_method='round')
+    print(f"\nDequantized (per-tensor, 'round'):\n{dequant_pt_round}")
+    scale_pt_r = weights_example.abs().mean().clamp_min(1e-9)
+    print(f"Effective ternary (per-tensor, 'round'):\n{(weights_example/scale_pt_r).round().clamp(-1,1)}")
+
+
+    # Per-tensor, 'threshold' method
+    dequant_pt_thresh = absmean_quant(weights_example, group_size=None, ternary_method='threshold')
+    print(f"\nDequantized (per-tensor, 'threshold'):\n{dequant_pt_thresh}")
+    scale_pt_t = weights_example.abs().mean().clamp_min(1e-9)
+    norm_w_pt_t = weights_example/scale_pt_t
+    print(f"Effective ternary (per-tensor, 'threshold'):\n{torch.sign(norm_w_pt_t) * (norm_w_pt_t.abs() > 0.5).float()}")
 
     # Group-wise example
-    # Make sure numel is divisible by group_size for this simple example version
-    weights_gw = torch.randn(4, 16) * 5 # 4*16 = 64 elements
-    group_size_gw = 16 # 64 / 16 = 4 groups
+    weights_gw = torch.randn(2, 12) * 3 # 2*12 = 24 elements
+    group_size_gw = 6 # 24 / 6 = 4 groups
 
     print(f"\nOriginal weights (for group-wise, shape {weights_gw.shape}):\n{weights_gw}")
-    dequant_weights_gw = absmean_quant(weights_gw, group_size=group_size_gw)
-    print(f"Dequantized weights after group-wise absmean_quant (group_size={group_size_gw}):\n{dequant_weights_gw}")
 
-    # Example of how effective ternary weights would look for group-wise (for one group)
-    first_group = weights_gw.view(-1, group_size_gw)[0]
-    scale_gw_eff_group0 = first_group.abs().mean().clamp_min(1e-6)
-    ternary_gw_eff_group0 = (first_group / scale_gw_eff_group0).round().clamp(-1,1)
-    print(f"Effective ternary weights for first group (group_size={group_size_gw}):\n{ternary_gw_eff_group0}")
-    print(f"Original first group:\n{first_group}")
-    print(f"Dequantized first group (from output):\n{dequant_weights_gw.view(-1,group_size_gw)[0]}")
+    # Group-wise, 'round'
+    dequant_gw_round = absmean_quant(weights_gw, group_size=group_size_gw, ternary_method='round')
+    print(f"Dequantized (group-wise, 'round', group_size={group_size_gw}):\n{dequant_gw_round}")
+
+    # Group-wise, 'threshold'
+    dequant_gw_thresh = absmean_quant(weights_gw, group_size=group_size_gw, ternary_method='threshold')
+    print(f"Dequantized (group-wise, 'threshold', group_size={group_size_gw}):\n{dequant_gw_thresh}")
 
     # Test with all zeros
-    all_zeros = torch.zeros(2,32)
+    all_zeros = torch.zeros(2,6)
     print(f"\nOriginal all zeros: {all_zeros}")
-    dequant_zeros_pt = absmean_quant(all_zeros, group_size=None)
-    dequant_zeros_gw = absmean_quant(all_zeros, group_size=16)
-    print(f"Dequantized all zeros (per-tensor): {dequant_zeros_pt}")
-    print(f"Dequantized all zeros (group-wise): {dequant_zeros_gw}")
+    print(f"Dequantized all zeros (per-tensor, round): {absmean_quant(all_zeros, group_size=None, ternary_method='round')}")
+    print(f"Dequantized all zeros (per-tensor, threshold): {absmean_quant(all_zeros, group_size=None, ternary_method='threshold')}")
+    print(f"Dequantized all zeros (group-wise, round): {absmean_quant(all_zeros, group_size=3, ternary_method='round')}")
+    print(f"Dequantized all zeros (group-wise, threshold): {absmean_quant(all_zeros, group_size=3, ternary_method='threshold')}")
+
+    # Test fallback for non-divisible group size
+    weights_nd = torch.randn(1, 7) * 2 # 7 elements, group size 3
+    print(f"\nOriginal non-divisible weights (shape {weights_nd.shape}):\n{weights_nd}")
+    dequant_nd_round = absmean_quant(weights_nd, group_size=3, ternary_method='round')
+    print(f"Dequantized non-divisible (group_size=3, 'round', should fallback to per-tensor):\n{dequant_nd_round}")
+    # Verify it's same as per-tensor
+    dequant_nd_pt_round = absmean_quant(weights_nd, group_size=None, ternary_method='round')
+    print(f"Dequantized non-divisible (per-tensor for comparison):\n{dequant_nd_pt_round}")
+    assert torch.allclose(dequant_nd_round, dequant_nd_pt_round), "Fallback for non-divisible group size did not match per-tensor."
+    print("Fallback for non-divisible group size verified.")

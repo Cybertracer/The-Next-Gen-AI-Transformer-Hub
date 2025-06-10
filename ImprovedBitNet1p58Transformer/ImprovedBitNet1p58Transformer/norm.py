@@ -1,77 +1,67 @@
-# Placeholder for Normalization modules
-# This file will typically contain implementations like RMSNorm (Root Mean Square Normalization).
-
 import torch
 import torch.nn as nn
 
 class RMSNorm(nn.Module):
-    """
-    Root Mean Square Layer Normalization.
-    Reference: "Root Mean Square Layer Normalization" (https://arxiv.org/abs/1910.07467)
-    """
-    def __init__(self, dim, eps=1e-6):
+    def __init__(self, dim: int, eps: float = 1e-6):
+        """
+        Root Mean Square Layer Normalization.
+
+        Args:
+            dim (int): The dimension of the input tensor.
+            eps (float): A small value added to the denominator for numerical stability.
+        """
         super().__init__()
         self.eps = eps
-        self.weight = nn.Parameter(torch.ones(dim)) # Learnable gain, initialized to 1
+        # The gamma parameter (scale) is learnable
+        self.weight = nn.Parameter(torch.ones(dim))
 
-    def _norm(self, x):
-        # Calculate Root Mean Square: sqrt(mean of squares)
-        # Add eps for numerical stability before sqrt
+    def _norm(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply RMS normalization formula."""
+        # x.pow(2).mean(-1, keepdim=True) computes E[x^2] along the last dimension
+        # torch.rsqrt is 1 / sqrt(x)
         return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
 
-    def forward(self, x):
-        # Normalize the input
-        normalized_x = self._norm(x)
-        # Scale with learnable gain
-        return self.weight * normalized_x
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass for RMSNorm.
+        Input tensor is expected to have shape (batch_size, seq_len, dim)
+        or any shape where the last dimension is 'dim'.
+        """
+        output = self._norm(x.float()).type_as(x) # Convert to float for norm, then back to original type
+        return output * self.weight
 
 if __name__ == '__main__':
-    # Example Usage (placeholder)
+    print("Running norm.py (RMSNorm) example:")
+
     # Parameters
     batch_size = 4
     seq_len = 10
-    model_dim = 128
+    feature_dim = 64
 
-    # Create dummy input
-    dummy_input = torch.randn(batch_size, seq_len, model_dim)
+    # Create RMSNorm layer
+    rms_norm_layer = RMSNorm(dim=feature_dim)
+    print(f"RMSNorm layer: {rms_norm_layer}")
 
-    # Initialize RMSNorm layer
-    rmsnorm_layer = RMSNorm(dim=model_dim)
+    # Create a sample input tensor
+    input_tensor = torch.randn(batch_size, seq_len, feature_dim) * 5 # Add some scale
+    print(f"Input tensor shape: {input_tensor.shape}")
 
     # Forward pass
-    output = rmsnorm_layer(dummy_input)
+    output_tensor = rms_norm_layer(input_tensor)
+    print(f"Output tensor shape: {output_tensor.shape}")
 
-    print("RMSNorm input shape:", dummy_input.shape)
-    print("RMSNorm output shape:", output.shape)
+    # Check statistics of the output (mean should be close to 0, std close to 1 before scaling by weight)
+    # For RMSNorm, the mean of (output / weight) is not necessarily 0, but its RMS is 1.
+    normalized_output_rms = torch.sqrt((output_tensor / rms_norm_layer.weight).pow(2).mean(-1))
+    print(f"RMS of (output / weight) along last dim (should be close to 1.0):\n{normalized_output_rms}")
 
-    # Check if output statistics are as expected (mean close to 0, std close to gain after norm)
-    # Note: RMSNorm doesn't center the data (no learnable bias like LayerNorm)
-    # So, mean won't necessarily be 0.
-    # The variance of the _norm(x) part should be close to 1.
-    # The variance of the output will be close to self.weight.pow(2).mean() if weight is not scalar.
-    # For a scalar weight (or all elements equal), var(output) ~ weight^2 * var(_norm(x))
+    # Check that weights are being applied
+    rms_norm_layer.weight.data.fill_(2.0) # Set all weights to 2.0
+    output_tensor_scaled = rms_norm_layer(input_tensor)
+    # RMS of (output_tensor_scaled / new_weight) should still be ~1.0
+    # and output_tensor_scaled should be approx 2 * (output_tensor when weight was 1)
+    normalized_output_scaled_rms = torch.sqrt((output_tensor_scaled / rms_norm_layer.weight).pow(2).mean(-1))
+    print(f"RMS of (output_scaled / new_weight=2.0) along last dim (should be close to 1.0):\n{normalized_output_scaled_rms}")
 
-    # Calculate variance of the normalized part (before scaling by weight)
-    # To do this, we can call the internal _norm method.
-    normalized_part = rmsnorm_layer._norm(dummy_input)
-    print("Mean of normalized_part (should be somewhat close to 0):", normalized_part.mean().item())
-    print("Std of normalized_part (should be close to 1):", normalized_part.std().item())
-
-    # Check learnable parameter
-    print("\nLearnable gain (self.weight) initial values (first 5):", rmsnorm_layer.weight.data[:5])
-    # After training, these weights would be updated.
-
-    # Example with a different gain initialization for testing
-    custom_gain = torch.arange(1, model_dim + 1, dtype=torch.float32) / model_dim
-    rmsnorm_layer_custom_gain = RMSNorm(dim=model_dim)
-    rmsnorm_layer_custom_gain.weight.data = custom_gain.clone() # Assign new gain
-
-    output_custom_gain = rmsnorm_layer_custom_gain(dummy_input)
-    # The std of output_custom_gain should reflect the new gains.
-    # This is harder to verify with a simple print, but shows how the gain works.
-    print("\nOutput std with custom gain (example):", output_custom_gain.std().item())
-    # The actual std will depend on the interaction of input data and the specific gain vector.
-    # If gain was a scalar 'g', output std would be approx 'g' * input_normalized_std.
-    # With a vector gain, it's more complex.
-
-    print(f"\nRMSNorm with dim={model_dim} initialized.")
+    print(f"Output mean (sample): {output_tensor_scaled.mean().item()}") # Mean can be non-zero
+    print(f"Output std (sample): {output_tensor_scaled.std().item()}")   # Std reflects the learned weight

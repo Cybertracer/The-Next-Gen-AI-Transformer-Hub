@@ -14,29 +14,28 @@ from .bitnet_quant import (
     quantize_activations,
     absmean_quant,
     BitLinear,
+    BitEmbedding, # Added BitEmbedding
     QUANT_CONFIG,
     init_bitlinear
 )
 
 # Placeholder imports for other potential top-level components
-# (uncomment and adjust as these modules are developed)
 # from .bit_attention import BitAttention
 # from .bit_feedforward import BitFeedForward
-# from .norm import RMSNorm # Or other normalization layers
+# from .norm import RMSNorm
 # from .bit_transformer import BitTransformer, BitTransformerBlock
 
-# Define what gets imported with "from ImprovedBitNet1p58Transformer.ImprovedBitNet1p58Transformer import *"
-# This should be curated to expose the main public API.
 __all__ = [
     # From bitnet_quant
     'absmax_quant',
     'quantize_activations',
     'absmean_quant',
     'BitLinear',
+    'BitEmbedding', # Added BitEmbedding
     'QUANT_CONFIG',
     'init_bitlinear',
 
-    # Placeholders for other components when they are ready
+    # Placeholders
     # 'BitAttention',
     # 'BitFeedForward',
     # 'RMSNorm',
@@ -44,4 +43,4 @@ __all__ = [
     # 'BitTransformerBlock',
 ]
 
-print("ImprovedBitNet1p58Transformer package loaded.") # Optional: for debugging imports
+# print("ImprovedBitNet1p58Transformer package loaded.") # Optional
