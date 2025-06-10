@@ -1,7 +1,7 @@
 import unittest
 # Placeholder: You'll need to import the actual BitTransformer module and its components
-# from ImprovedBitnet158Transformer.ImprovedBitnet158Transformer.bit_transformer import BitTransformer
-# from ImprovedBitnet158Transformer.ImprovedBitnet158Transformer.bit_transformer import BitTransformerBlock
+# from ImprovedBitNet1p58Transformer.ImprovedBitNet1p58Transformer.bit_transformer import BitTransformer
+# from ImprovedBitNet1p58Transformer.ImprovedBitNet1p58Transformer.bit_transformer import BitTransformerBlock
 
 class TestBitTransformer(unittest.TestCase):
 
